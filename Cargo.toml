@@ -6,3 +6,4 @@ authors = ["Navaneeth K N <navaneethkn@gmail.com>"]
 [dependencies]
 docopt = "0.6.*"
 rustc-serialize = "0.3"
+uuid = "0.1"

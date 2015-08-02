@@ -1,5 +1,6 @@
 extern crate rustc_serialize;
 extern crate docopt;
+extern crate uuid;
 
 use docopt::Docopt;
 use std::fs;
@@ -7,13 +8,11 @@ use std::path::Path;
 use rustc_serialize::json;
 use std::io::prelude::*;
 use std::fs::File;
-
-  //naval_fate.py ship <name> move <x> <y> [--speed=<kn>]
-  //naval_fate.py ship shoot <x> <y>
-  //naval_fate.py mine (set|remove) <x> <y> [--moored | --drifting]
-  //naval_fate.py (-h | --help)
-  //naval_fate.py --version
-
+use std::io::Result;
+use std::process::exit;
+use std::env;
+use uuid::Uuid;
+use std::process::Command;
 
 static VERSION: &'static str = "0.0.1";
 static USAGE: &'static str = "
@@ -71,11 +70,17 @@ fn get_env_file_path(name: &str) -> std::path::PathBuf {
     return env_store_path;
 }
 
-fn read_file(file_name: &str) -> String {
-    let mut f = File::open(file_name).unwrap();
+fn read_file(file_name: &str) -> Result<String> {
+    let mut f = try!(File::open(file_name));
     let mut s = String::new();
-    f.read_to_string(&mut s);
-    return s;
+    try!(f.read_to_string(&mut s));
+    return Ok(s);
+}
+
+fn write_file<P: AsRef<Path>>(file_path: &P, contents: &[u8]) -> Result<()> {
+    let mut f = try!(File::create(file_path));
+    try!(f.write_all(contents));
+    Ok(())
 }
 
 fn get_all_environments() -> Vec<Environment> {
@@ -83,7 +88,7 @@ fn get_all_environments() -> Vec<Environment> {
     let paths = fs::read_dir(env_dir.as_path()).unwrap();
     let mut environments: Vec<Environment> = Vec::new();
     for path in paths {
-        let file_contents = read_file(path.unwrap().path().to_str().unwrap());
+        let file_contents = read_file(path.unwrap().path().to_str().unwrap()).unwrap();
         let decoded: Environment = json::decode(&file_contents).unwrap();
         environments.push(decoded);
     }
@@ -93,7 +98,10 @@ fn get_all_environments() -> Vec<Environment> {
 fn get_environment(name: &str) -> Option<Environment> {
     let file_name = format!("{}.json", name);
     let env_file = get_env_file_path(&file_name);
-    let file_contents = read_file(env_file.to_str().unwrap());
+    let file_contents = match read_file(env_file.to_str().unwrap()) {
+        Ok(c) => {c},
+        Err(e) => {return None}
+    };
     let decoded: Environment = json::decode(&file_contents).unwrap();
     Some(decoded)
 }
@@ -113,7 +121,7 @@ fn process_env_command(args: &Args) {
             name: args.arg_name.clone(),
             ip: args.flag_ip.clone(),
             sshuser: args.flag_ssh_user.clone(),
-            key: read_file(&args.flag_key_file)
+            key: read_file(&args.flag_key_file).unwrap()
         };
         let encoded = json::encode(&e).unwrap();
 
@@ -122,6 +130,29 @@ fn process_env_command(args: &Args) {
         let file_path = get_env_file_path(&file_name);
         let mut f = File::create(file_path.to_str().unwrap()).unwrap();
         f.write_all(&(encoded.into_bytes())[..]);
+    }
+}
+
+fn ssh_into(env: &Environment) {
+    // storing the key in a temporary file so that can be passed to SSH command
+    let mut pem_file = env::temp_dir();
+    pem_file.push(format!("{}.pem", Uuid::new_v4().to_string()));
+    match write_file(&pem_file, &(env.key.clone().into_bytes()[..])) {
+        Ok(_) => {},
+        Err(e) => { println!("Failed to write pem file"); exit(2); }
+    }
+
+    println!("ssh -i {} {}@{}", pem_file.to_str().unwrap(), env.sshuser, env.ip);
+    let mut ssh = Command::new("ssh")
+                        .arg("-i")
+                        .arg(pem_file)
+                        .arg(format!("{}@{}", env.sshuser, env.ip))
+                        .spawn()
+                        .unwrap_or_else(|e| { panic!("failed to execute ssh: {}", e) });
+    let ecode = ssh.wait().unwrap_or_else(|e| { panic!("failed to wait on child: {}", e) });
+    if !ecode.success() {
+        println!("SSH exited with a non-zero exit code: {}", ecode);
+        exit(2);
     }
 }
 
@@ -135,10 +166,9 @@ fn main() {
         let name = args.arg_name;
         let env = get_environment(&name);
         match env {
-            Some(e) => println!("valid env"),
-            None => println!("invalid env"),
+            Some(e) => ssh_into(&e),
+            None => {println!("{} is not a valid environment", name); exit(2);},
         }
-        println!("will ssh");
     } else {
         println!("{}", VERSION);
     }
