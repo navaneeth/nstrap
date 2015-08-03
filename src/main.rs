@@ -100,7 +100,7 @@ fn get_environment(name: &str) -> Option<Environment> {
     let env_file = get_env_file_path(&file_name);
     let file_contents = match read_file(env_file.to_str().unwrap()) {
         Ok(c) => {c},
-        Err(e) => {return None}
+        Err(_) => {return None}
     };
     let decoded: Environment = json::decode(&file_contents).unwrap();
     Some(decoded)
@@ -128,8 +128,10 @@ fn process_env_command(args: &Args) {
         //writing to the File
         let file_name = format!("{}.json", e.name);
         let file_path = get_env_file_path(&file_name);
-        let mut f = File::create(file_path.to_str().unwrap()).unwrap();
-        f.write_all(&(encoded.into_bytes())[..]);
+        match write_file(&file_path, &(encoded.into_bytes())[..]) {
+            Ok(_) => println!("Created environment: {}", e.name),
+            Err(e) => { println!("Failed to create environment. {}", e); exit(2); }
+        }
     }
 }
 
@@ -139,7 +141,7 @@ fn ssh_into(env: &Environment) {
     pem_file.push(format!("{}.pem", Uuid::new_v4().to_string()));
     match write_file(&pem_file, &(env.key.clone().into_bytes()[..])) {
         Ok(_) => {},
-        Err(e) => { println!("Failed to write pem file"); exit(2); }
+        Err(e) => { println!("Failed to write pem file. {}", e); exit(2); }
     }
 
     println!("ssh -i {} {}@{}", pem_file.to_str().unwrap(), env.sshuser, env.ip);
