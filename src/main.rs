@@ -13,6 +13,7 @@ use std::process::exit;
 use std::env;
 use uuid::Uuid;
 use std::process::Command;
+use std::ffi::OsStr;
 
 static VERSION: &'static str = "0.0.1";
 static USAGE: &'static str = "
@@ -83,6 +84,16 @@ fn write_file<P: AsRef<Path>>(file_path: &P, contents: &[u8]) -> Result<()> {
     Ok(())
 }
 
+fn set_file_permission<P: AsRef<OsStr>>(file_path: &P, permission: &str) -> Result<()> {
+    let mut command = Command::new("chmod")
+                        .arg(permission)
+                        .arg(file_path)
+                        .spawn()
+                        .unwrap_or_else(|e| { panic!("failed to execute ssh: {}", e) });
+    try!(command.wait());
+    Ok(())
+}
+
 fn get_all_environments() -> Vec<Environment> {
     let env_dir = get_store_path("environments");
     let paths = fs::read_dir(env_dir.as_path()).unwrap();
@@ -142,6 +153,11 @@ fn ssh_into(env: &Environment) {
     match write_file(&pem_file, &(env.key.clone().into_bytes()[..])) {
         Ok(_) => {},
         Err(e) => { println!("Failed to write pem file. {}", e); exit(2); }
+    }
+
+    match set_file_permission(&pem_file,"600") {
+        Ok(_) => {},
+        Err(e) => { println!("Failed to change permission. {}",e); exit(2); }
     }
 
     println!("ssh -i {} {}@{}", pem_file.to_str().unwrap(), env.sshuser, env.ip);
